@@ -10,6 +10,7 @@ BuildScope est un tableau de bord local pour suivre les déploiements Coolify et
 
 - Les applications et leurs déploiements récents : statut, date, durée totale et machine de compilation.
 - La recherche, le filtre par statut et le tri par colonne pour retrouver un déploiement.
+- La consultation et le téléchargement des journaux ; pour un échec, les lignes susceptibles d’expliquer le problème sont mises en évidence.
 - Le processeur, la mémoire, le disque disponible et le cache Docker de la VM Colima, actualisés toutes les cinq secondes.
 - Lorsque le collecteur optionnel est installé : la taille locale des images, la durée d'envoi et une estimation du trafic sortant pendant le transfert.
 - Un débit calculé en divisant la taille locale de l'image par la durée d'envoi, lorsque ces deux mesures sont disponibles.
@@ -21,7 +22,7 @@ BuildScope est un tableau de bord local pour suivre les déploiements Coolify et
 
 ## Installation et utilisation
 
-Prérequis : macOS, Python 3, Colima et une VM `colima` démarrée avec Docker. Il faut aussi une instance Coolify accessible et un jeton API disposant de la permission de lecture.
+Prérequis : macOS, Python 3, Colima et une VM `colima` démarrée avec Docker. Il faut aussi une instance Coolify accessible et un jeton API disposant de la permission de lecture. La consultation des journaux nécessite aussi la permission `read:sensitive`.
 
 ```sh
 git clone https://github.com/alainfinck/BuildScope.git
@@ -47,4 +48,4 @@ Le collecteur optionnel `collector.py` est destiné à fonctionner comme service
 
 La taille affichée est celle de l'image locale **non compressée**. Le trafic indiqué correspond à l'ensemble du trafic sortant de la VM pendant la commande `docker push` : il peut inclure d'autres échanges. Le débit calculé à partir de la taille locale et de la durée d'envoi est donc un indicateur, **pas une mesure du débit réseau réel**. Les images et le cache Docker peuvent partager des données : leurs tailles ne s'additionnent pas nécessairement.
 
-La durée totale comprend l'attente, la compilation, les transferts et le démarrage. L'historique affiche jusqu'aux 15 derniers déploiements par application. Les valeurs non disponibles sont indiquées par « — ».
+La durée totale comprend l'attente, la compilation, les transferts et le démarrage. L'historique affiche jusqu'aux 15 derniers déploiements par application. Les valeurs non disponibles sont indiquées par « — ». Les journaux peuvent contenir des données sensibles : vérifiez-les avant de les partager.

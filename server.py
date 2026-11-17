@@ -180,11 +180,12 @@ class Handler(BaseHTTPRequestHandler):
         if self.path != '/': return self.send(404,{'error':'Introuvable'})
         html=(ROOT/'index.html').read_text().replace('__SESSION_KEY__',KEY).encode(); self.send(200,html,'text/html; charset=utf-8')
     def do_POST(self):
-        if self.path not in ('/report','/configure','/metrics','/cleanup') or self.headers.get('X-Local-Key')!=KEY or self.headers.get('Origin')!=f'http://127.0.0.1:{PORT}': return self.send(403,{'error':'Requête refusée'})
+        if self.path not in ('/report','/configure','/metrics','/cleanup','/deployment-logs') or self.headers.get('X-Local-Key')!=KEY or self.headers.get('Origin')!=f'http://127.0.0.1:{PORT}': return self.send(403,{'error':'Requête refusée'})
         try:
             n=int(self.headers.get('Content-Length','0'))
             if n<=0 or n>4096: raise ValueError('requête invalide')
-            token=json.loads(self.rfile.read(n)).get('token','')
+            payload=json.loads(self.rfile.read(n))
+            token=payload.get('token','')
             if self.path=='/metrics':
                 try: return self.send(200,{'available':True,**build_machine_metrics()})
                 except (OSError,ValueError,KeyError,subprocess.SubprocessError): return self.send(200,{'available':False})
@@ -202,6 +203,12 @@ class Handler(BaseHTTPRequestHandler):
                 return self.send(200,{'saved':True})
             token=saved_token()
             if not token: return self.send(401,{'error':'Connectez Coolify pour commencer.'})
+            if self.path=='/deployment-logs':
+                ident=payload.get('id')
+                if not isinstance(ident,str) or not re.fullmatch(r'[A-Za-z0-9-]{1,100}',ident): raise ValueError('Identifiant de déploiement invalide.')
+                detail=get('/deployments/'+ident,token)
+                if not isinstance(detail,dict): raise ValueError('Réponse Coolify invalide.')
+                return self.send(200,{'logs':text_log(detail.get('logs'))})
             return self.send(200,report(token))
         except urllib.error.HTTPError as e:
             return self.send(502,{'error':f'Coolify a refusé la requête (HTTP {e.code}). Vérifiez le jeton et les permissions API.'})
