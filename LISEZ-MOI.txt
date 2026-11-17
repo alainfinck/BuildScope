@@ -1,0 +1,6 @@
+BuildScope — suivi local des compilations
+
+Double-cliquez sur « Lancer le suivi.command » pour ouvrir le tableau de bord sur ce Mac.
+L'adresse locale est http://127.0.0.1:8765/.
+Le jeton Coolify est conservé dans le Trousseau macOS. Ne le partagez pas.
+Pour plus d'informations sur la configuration et les mesures, consultez README.md.
