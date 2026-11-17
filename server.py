@@ -51,6 +51,24 @@ def text_log(v):
         return '\n'.join((str(x.get('timestamp', x.get('created_at',''))) + ' ' + str(x.get('output', x.get('message','')))) if isinstance(x,dict) else str(x) for x in v)
     return ''
 
+def deployment_phase(status, log):
+    if status in ('queued','pending'): return 'En attente'
+    if status!='in_progress': return None
+    phase='Préparation du déploiement'
+    for line in log.splitlines():
+        line=line.lower()
+        if 'cloning into ' in line: phase='Récupération du code'
+        elif 'building docker image started' in line: phase='Compilation de l’image'
+        elif 'building docker image completed' in line: phase='Image compilée'
+        elif 'pushing image to docker registry' in line: phase='Envoi de l’image'
+        elif 'pulling image' in line: phase='Récupération de l’image'
+        elif 'waiting for healthcheck to pass' in line: phase='Vérification du démarrage'
+    return phase
+
+def progress_report(token):
+    active=rows(get('/deployments',token))
+    return {str(d.get('deployment_uuid') or d.get('uuid')):deployment_phase(d.get('status'),text_log(d.get('logs'))) for d in active if isinstance(d,dict) and (d.get('deployment_uuid') or d.get('uuid')) and d.get('status') in ('queued','pending','in_progress')}
+
 def metric(log):
     # Progress output reports per-layer cumulative downloaded bytes; repeated lines are not additive.
     sizes={}; ts=[]
@@ -147,7 +165,7 @@ def report(token):
                 tag=d.get('docker_registry_image_tag') or d.get('commit')
                 transfer=next((t for t in reversed(transfers) if t.get('deployment_id')==str(ident)),{})
                 clean.append({'id':str(ident),'application':app.get('name') or app.get('git_repository') or uid,
-                    'status':d.get('status','unknown'),'created_at':d.get('created_at'),'updated_at':d.get('updated_at'),
+                    'status':d.get('status','unknown'),'phase':deployment_phase(d.get('status'),text_log(d.get('logs'))),'created_at':d.get('created_at'),'updated_at':d.get('updated_at'),
                     'server':d.get('server_name'), 'commit':str(d.get('commit') or '')[:8],
                     'image_size_bytes':transfer.get('image_size_bytes') or (images.get((app.get('docker_registry_image_name'),tag)) if d.get('status') in ('finished','success') else None),
                     'upload_seconds':transfer.get('duration_seconds'), 'upload_tx_estimate':transfer.get('network_tx_bytes_estimate'),
@@ -186,6 +204,7 @@ def report(token):
             detail=get('/deployments/'+d['id'],token)
             if isinstance(detail,dict) and detail.get('logs'):
                 measured=metric(text_log(detail['logs']))
+                d['phase']=deployment_phase(d.get('status'),text_log(detail['logs']))
                 for key,value in measured.items():
                     if value is not None: d[key]=value
         except Exception: pass
@@ -203,7 +222,7 @@ class Handler(BaseHTTPRequestHandler):
         machine_name=json.dumps(socket.gethostname(),ensure_ascii=True).replace('<','\\u003c')
         html=(ROOT/'index.html').read_text().replace('__SESSION_KEY__',KEY).replace('__MACHINE_NAME__',machine_name).encode(); self.send(200,html,'text/html; charset=utf-8')
     def do_POST(self):
-        if self.path not in ('/report','/configure','/metrics','/cleanup','/deployment-logs') or self.headers.get('X-Local-Key')!=KEY or self.headers.get('Origin')!=f'http://127.0.0.1:{PORT}': return self.send(403,{'error':'Requête refusée'})
+        if self.path not in ('/report','/configure','/metrics','/cleanup','/deployment-logs','/progress') or self.headers.get('X-Local-Key')!=KEY or self.headers.get('Origin')!=f'http://127.0.0.1:{PORT}': return self.send(403,{'error':'Requête refusée'})
         try:
             n=int(self.headers.get('Content-Length','0'))
             if n<=0 or n>4096: raise ValueError('requête invalide')
@@ -226,6 +245,7 @@ class Handler(BaseHTTPRequestHandler):
                 return self.send(200,{'saved':True})
             token=saved_token()
             if not token: return self.send(401,{'error':'Connectez Coolify pour commencer.'})
+            if self.path=='/progress': return self.send(200,progress_report(token))
             if self.path=='/deployment-logs':
                 ident=payload.get('id')
                 if not isinstance(ident,str) or not re.fullmatch(r'[A-Za-z0-9-]{1,100}',ident): raise ValueError('Identifiant de déploiement invalide.')
