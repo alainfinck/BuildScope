@@ -71,7 +71,7 @@ def metric(log):
 
 def local_observations():
     lima=shutil.which('limactl')
-    if not lima: return {},{}
+    if not lima: return {},[]
     env={**os.environ,'LIMA_HOME':str(Path.home()/'.colima/_lima')}
     def call(args):
         try:
@@ -83,11 +83,11 @@ def local_observations():
             image=json.loads(line); match=re.fullmatch(r'([0-9.]+)\s*(kB|MB|GB|B)',image.get('Size',''),re.I)
             if match: images[(image.get('Repository'),image.get('Tag'))]=round(float(match[1])*{'b':1,'kb':1000,'mb':1000000,'gb':1000000000}[match[2].lower()])
         except (ValueError,TypeError): pass
-    transfers={}
+    transfers=[]
     for line in call(['sudo','cat','/var/lib/coolify-build-report/transfers.jsonl']).splitlines():
         try:
             data=json.loads(line)
-            if data.get('deployment_id'): transfers[data['deployment_id']]=data
+            if isinstance(data,dict): transfers.append(data)
         except (ValueError,TypeError): pass
     return images,transfers
 
@@ -145,18 +145,40 @@ def report(token):
                 elif build_server_id: m['builder']='Serveur distant'
                 elif 'build_server_id' in d and d.get('status') not in ('queued','in_progress','pending'): m['builder']=d.get('server_name')
                 tag=d.get('docker_registry_image_tag') or d.get('commit')
-                transfer=transfers.get(str(ident),{})
+                transfer=next((t for t in reversed(transfers) if t.get('deployment_id')==str(ident)),{})
                 clean.append({'id':str(ident),'application':app.get('name') or app.get('git_repository') or uid,
                     'status':d.get('status','unknown'),'created_at':d.get('created_at'),'updated_at':d.get('updated_at'),
                     'server':d.get('server_name'), 'commit':str(d.get('commit') or '')[:8],
                     'image_size_bytes':transfer.get('image_size_bytes') or (images.get((app.get('docker_registry_image_name'),tag)) if d.get('status') in ('finished','success') else None),
                     'upload_seconds':transfer.get('duration_seconds'), 'upload_tx_estimate':transfer.get('network_tx_bytes_estimate'),
-                    'url':d.get('deployment_url') if str(d.get('deployment_url','')).startswith(configured_url()+'/') else None, **m})
+                    'url':d.get('deployment_url') if str(d.get('deployment_url','')).startswith(configured_url()+'/') else None,
+                    '_image_ref':(str(app.get('docker_registry_image_name'))+':'+str(tag)) if app.get('docker_registry_image_name') and tag else None, **m})
             return clean,None
         except Exception as e: return [], str(e)
     with concurrent.futures.ThreadPoolExecutor(max_workers=5) as pool:
         results=list(pool.map(one,apps))
     history=[d for group,_ in results for d in group]
+    # Some transfers cannot be assigned by container ID when multiple helpers run.
+    # Match only when image reference and deployment time identify exactly one row.
+    proposed=[]
+    for transfer in transfers:
+        if transfer.get('deployment_id') or not transfer.get('image') or not transfer.get('started_at'): continue
+        try:
+            started=datetime.datetime.fromisoformat(transfer['started_at'].replace('Z','+00:00'))
+            matches=[]
+            for d in history:
+                if d.get('_image_ref')!=transfer['image']: continue
+                begin=datetime.datetime.fromisoformat(d['created_at'].replace('Z','+00:00'))
+                end=(datetime.datetime.now(datetime.timezone.utc) if d['status'] in ('queued','pending','in_progress') else datetime.datetime.fromisoformat(d['updated_at'].replace('Z','+00:00')))
+                if begin<=started<=end: matches.append(d)
+            if len(matches)==1: proposed.append((matches[0],transfer))
+        except (TypeError,ValueError,KeyError): pass
+    for d,transfer in proposed:
+        if d.get('upload_seconds') is None and sum(other is d for other,_ in proposed)==1:
+            d['image_size_bytes']=transfer.get('image_size_bytes')
+            d['upload_seconds']=transfer.get('duration_seconds')
+            d['upload_tx_estimate']=transfer.get('network_tx_bytes_estimate')
+    for d in history: d.pop('_image_ref',None)
     history.sort(key=lambda d:str(d.get('created_at') or ''),reverse=True)
     def details(d):
         try:
